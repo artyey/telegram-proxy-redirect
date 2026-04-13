@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>MTProto Proxy Hub v2.1.0</title>
+    <title>MTProto Proxy Hub v2.1.1</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -87,6 +87,20 @@
             display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap;
         }
         
+        /* 🟢 Уведомления */
+        .toast {
+            position: fixed; top: 20px; right: 20px; z-index: 9999;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white; padding: 14px 20px; border-radius: 14px;
+            font-size: 0.9rem; font-weight: 500;
+            box-shadow: 0 6px 16px rgba(16,185,129,0.4);
+            transform: translateX(140%); opacity: 0;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            pointer-events: none;
+        }
+        .toast.show { transform: translateX(0); opacity: 1; }
+        .toast.hide { transform: translateX(140%); opacity: 0; }
+        
         .loader { text-align: center; padding: 40px 20px; color: #94a3b8; }
         .spinner {
             width: 28px; height: 28px; border: 3px solid #1e293b; border-top-color: #0ea5e9;
@@ -100,6 +114,7 @@
         @media (max-width: 520px) {
             .proxy-card { grid-template-columns: 1fr; gap: 8px; }
             .btn { width: 100%; text-align: center; }
+            .toast { left: 20px; right: 20px; text-align: center; }
         }
     </style>
 </head>
@@ -112,24 +127,24 @@
 </div>
 
 <script>
-    const VERSION = "2.1.0";
-    const REFRESH_MS = 3600000; // 1 час
-    const PING_INTERVAL = 10000; // 10 сек
+    const VERSION = "2.1.1";
+    const REFRESH_MS = 600000; // 10 минут
+    const PING_INTERVAL = 10000; // 10 секунд
     const TIMER_KEY = `tg_timer_${VERSION}`;
     const USED_KEY = `tg_used_${VERSION}`;
-    const PROXIES_FILE = "./proxies.json"; // Только локальный файл из Actions
+    const SEEN_KEY = `tg_seen_${VERSION}`;
+    const PROXIES_FILE = "./proxies.json";
 
     const text = { 
         title: "Прокси для Telegram", 
-        sub: "Источник: @ProxyFree_Ru • Автообновление каждый час", 
+        sub: "Источник: @ProxyFree_Ru • Автообновление каждые 10 мин", 
         connect: "Подключить", 
         update: "Обновление через", 
         error: "Не удалось загрузить прокси. Подождите, пока GitHub Actions создаст proxies.json", 
-        notice: "Пинг проверяется каждые 10с. Для работы требуется клиент Telegram.",
-        loading: "Загрузка...", pinging: "Проверка пинга", done: "Готово"
+        notice: "Пинг проверяется каждые 10с. Для работы требуется клиент Telegram."
     };
 
-    let pingIntervalId = null;
+    let countdownIntervalId = null, pingIntervalId = null;
 
     // 🕒 Таймер (сохраняется в localStorage)
     function getNextUpdate() {
@@ -137,14 +152,11 @@
         const time = saved ? parseInt(saved) : 0;
         return time > Date.now() ? time : Date.now() + REFRESH_MS;
     }
-    function setNextUpdate(time) {
-        localStorage.setItem(TIMER_KEY, String(time));
-    }
+    function setNextUpdate(time) { localStorage.setItem(TIMER_KEY, String(time)); }
 
     // 💾 Состояние "Использовано"
     function isUsed(p) {
-        try { return JSON.parse(localStorage.getItem(USED_KEY) || "[]").includes(`${p.server}:${p.port}`); } 
-        catch { return false; }
+        try { return JSON.parse(localStorage.getItem(USED_KEY) || "[]").includes(`${p.server}:${p.port}`); } catch { return false; }
     }
     function markUsed(p) {
         try {
@@ -152,6 +164,22 @@
             const k = `${p.server}:${p.port}`;
             if (!arr.includes(k)) { arr.push(k); localStorage.setItem(USED_KEY, JSON.stringify(arr)); }
         } catch {}
+    }
+
+    // 🔍 История показанных прокси (для уведомлений)
+    function getSeenKeys() {
+        try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); } catch { return new Set(); }
+    }
+    function setSeenKeys(keys) { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(keys))); }
+
+    // 🟢 Уведомления
+    function showNotification(msg) {
+        const toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = `✨ ${msg}`;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add("show"));
+        setTimeout(() => { toast.classList.add("hide"); setTimeout(() => toast.remove(), 400); }, 4000);
     }
 
     // 📥 Загрузка ТОЛЬКО из proxies.json
@@ -163,7 +191,7 @@
         
         return json.proxies
             .filter(p => p?.server && p.server.toLowerCase() !== "unknown" && p.port && p.secret)
-            .slice(0, 12) // Строго 12 последних
+            .slice(0, 12)
             .map(p => ({ ...p, used: isUsed(p) }));
     }
 
@@ -229,6 +257,7 @@
 
     // 🕒 Таймер с сохранением
     function startCountdown() {
+        clearInterval(countdownIntervalId);
         const target = getNextUpdate();
         const el = document.getElementById("countdown");
         if (!el) return;
@@ -238,27 +267,34 @@
             el.textContent = formatCountdown(diff);
             
             if (diff <= 0) {
-                clearInterval(interval);
+                clearInterval(countdownIntervalId);
                 refreshCycle();
             }
         };
         
         tick();
-        const interval = setInterval(tick, 1000);
+        countdownIntervalId = setInterval(tick, 1000);
     }
 
-    // 🔄 Автоцикл: новые прокси + сброс таймера
+    // 🔄 Автоцикл: проверка новых + сброс таймера
     async function refreshCycle() {
-        const next = Date.now() + REFRESH_MS;
-        setNextUpdate(next);
-        
+        const oldKeys = getSeenKeys();
         try {
-            const proxies = await fetchProxies();
-            render(proxies);
+            const newProxies = await fetchProxies();
+            const newKeys = new Set(newProxies.map(p => `${p.server}:${p.port}`));
+            
+            // Сравнение: нашлись ли новые
+            const added = [...newKeys].filter(k => !oldKeys.has(k));
+            if (added.length > 0) {
+                showNotification(`Добавлено ${added.length} новых серверов!`);
+            }
+            setSeenKeys(newKeys);
+            
+            render(newProxies);
+            setNextUpdate(Date.now() + REFRESH_MS); // Сдвигаем таймер на следующие 10 мин
         } catch (e) {
             console.error("Автообновление не удалось:", e);
-            // Если ошибка, пробуем снова через 5 минут
-            setTimeout(refreshCycle, 300000);
+            setTimeout(refreshCycle, 60000); // Повтор через минуту при ошибке
         }
     }
 
@@ -318,10 +354,8 @@
     document.addEventListener("DOMContentLoaded", async () => {
         try {
             // Если таймер истёк пока вкладка была закрыта → сразу обновляем
-            let nextUpdate = getNextUpdate();
-            if (nextUpdate < Date.now()) {
-                nextUpdate = Date.now() + REFRESH_MS;
-                setNextUpdate(nextUpdate);
+            if (getNextUpdate() < Date.now()) {
+                setNextUpdate(Date.now() + REFRESH_MS);
             }
             const proxies = await fetchProxies();
             render(proxies);
