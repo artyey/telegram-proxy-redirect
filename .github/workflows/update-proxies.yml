@@ -1,1 +1,68 @@
-
+name: Update Proxies
+on:
+  schedule:
+    - cron: '0 * * * *'  # Запуск каждый час
+  workflow_dispatch:     # Ручной запуск по кнопке
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - name: Fetch & Parse Telegram Channel
+        run: |
+          curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://t.me/s/ProxyFree_Ru" > page.html
+          python3 << 'PYEOF'
+          import re, json
+          with open("page.html", "r", encoding="utf-8") as f: html = f.read()
+          
+          proxies = []
+          seen = set()
+          
+          # Разбиваем на блоки сообщений
+          blocks = html.split('<div class="tgme_widget_message')
+          for b in blocks:
+              servers = re.findall(r'Server\s*[:：]?\s*`?([a-zA-Z0-9.\-]+)`?', b)
+              ports = re.findall(r'Port\s*[:：]?\s*`?(\d+)`?', b)
+              secrets = re.findall(r'Secret\s*[:：]?\s*`?([A-Za-z0-9_+\-/=]+)`?', b)
+              flags = re.findall(r'(🇷🇺|🇺🇸|🇩🇪|🇳🇱|🇫🇷|🇬🇧|🇫🇮|🇵🇱|🇸🇬|🇯🇵|🇮🇳|🇨🇦|🇦🇺|🇧🇷|🇹🇷|🇮🇷|🇦🇪|🇮🇱|🇸🇪|🇳🇴|🇨🇿|🇱🇻|🇱🇹|🇪🇪|🇰🇿|🇺🇿|🇲🇩|🇧🇾|🇬🇪|🇦🇲|🇦🇿|🇻🇳|🇹🇭|🇲🇾)', b)
+              
+              for i in range(min(len(servers), len(ports), len(secrets))):
+                  key = f"{servers[i]}:{ports[i]}"
+                  if key not in seen and servers[i].lower() != "unknown" and len(servers[i]) > 3:
+                      seen.add(key)
+                      proxies.append({
+                          "type": "MTProto",
+                          "server": servers[i],
+                          "port": ports[i],
+                          "secret": secrets[i],
+                          "flag": flags[0] if flags else ("🇷🇺" if ".ru" in servers[i] else "🌐"),
+                          "raw": f"tg://proxy?server={servers[i]}&port={ports[i]}&secret={secrets[i]}"
+                      })
+          
+          # Фоллбэк если мало прокси
+          if len(proxies) < 4:
+              for fb in [
+                  {"server":"185.173.36.38","port":"443","secret":"eeRighJJvXrFGRMCIMJdCQ","flag":"🇳🇱"},
+                  {"server":"91.107.255.159","port":"8443","secret":"eeNEgYdJvXrFGRMCIMJdCQ","flag":"🇩🇪"},
+                  {"server":"65.109.153.70","port":"8443","secret":"1320PuNyHw_LQKT_Y7XNJw","flag":"🇫🇮"}
+              ]:
+                  k = f"{fb['server']}:{fb['port']}"
+                  if k not in seen:
+                      proxies.append({
+                          "type": "MTProto", **fb,
+                          "raw": f"tg://proxy?server={fb['server']}&port={fb['port']}&secret={fb['secret']}"
+                      })
+          
+          with open("proxies.json", "w", encoding="utf-8") as f:
+              json.dump({"success": True, "count": len(proxies), "proxies": proxies}, f, indent=2, ensure_ascii=False)
+          print(f"✅ Saved {len(proxies)} proxies")
+          PYEOF
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add proxies.json
+          git commit -m "🤖 Auto-update proxies" || echo "No changes to commit"
+          git push
