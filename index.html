@@ -41,86 +41,90 @@
         .loader { text-align: center; padding: 30px; color: #94a3b8; }
         .spinner { width: 24px; height: 24px; border: 3px solid #1e293b; border-top-color: #0ea5e9; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px; }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .error-msg { background: #450a0a; border: 1px solid #7f1d1d; padding: 10px; border-radius: 10px; text-align: center; color: #fca5a5; font-size: 0.8rem; margin-bottom: 12px; }
         
-        /* 🔔 Уведомления */
         .toast { position: fixed; top: 20px; right: 20px; z-index: 9999; background: linear-gradient(135deg, #10b981, #059669); color: #fff; padding: 12px 16px; border-radius: 12px; font-size: 0.85rem; font-weight: 500; box-shadow: 0 4px 12px rgba(16,185,129,0.4); transform: translateX(120%); opacity: 0; transition: 0.4s cubic-bezier(0.4,0,0.2,1); display: flex; align-items: center; gap: 10px; }
         .toast.show { transform: translateX(0); opacity: 1; }
         .toast.hide { transform: translateX(120%); opacity: 0; }
         .toast button { background: none; border: none; color: rgba(255,255,255,0.8); cursor: pointer; font-size: 1.1rem; padding: 0; }
-        .toast button:hover { color: #fff; }
         @media (max-width: 500px) { .proxy-card { grid-template-columns: 1fr; } .btn { width: 100%; } .toast { left: 10px; right: 10px; justify-content: space-between; } }
     </style>
 </head>
 <body>
-<div class="container" id="app"><div class="loader"><div class="spinner"></div>Загрузка...</div></div>
+<div class="container" id="app"><div class="loader"><div class="spinner"></div>Проверка подключения...</div></div>
 
 <script>
     const CONFIG = {
-        WORKER_URL: "https://tg-proxy-fetcher.nevien19.workers.dev", // ← ВСТАВЬТЕ ССЫЛКУ
+        WORKER_URL: "https://ВАШ_CF_WORKER_URL.workers.dev/?pages=5&days=7", // ← ВСТАВЬТЕ ВАШ URL
         REFRESH_MS: 600000, // 10 минут
         PING_INTERVAL: 10000,
         MAX_PROXIES: 12,
         TIMER_KEY: "tg_tmr_v220",
-        USED_KEY: "tg_used_v220",
-        SEEN_KEY: "tg_seen_v220"
+        USED_KEY: "tg_used_v220"
     };
 
     let state = { proxies: [], timer: null, pingTimer: null };
 
-    // ⏱️ Таймер (НИКАК не сбрасывается, сохраняется в localStorage)
     const getTarget = () => parseInt(localStorage.getItem(CONFIG.TIMER_KEY)) || Date.now() + CONFIG.REFRESH_MS;
     const setTarget = (t) => localStorage.setItem(CONFIG.TIMER_KEY, String(t));
-
-    // 💾 Использованные
-    const getUsed = () => new Set(JSON.parse(localStorage.getItem(CONFIG.USED_KEY) || "[]"));
-    const markUsed = (k) => { const s = getUsed(); s.add(k); localStorage.setItem(CONFIG.USED_KEY, JSON.stringify([...s])); };
+    const getUsed = () => { try { return new Set(JSON.parse(localStorage.getItem(CONFIG.USED_KEY) || "[]")); } catch { return new Set(); } };
+    const markUsed = (k) => { try { const s = getUsed(); s.add(k); localStorage.setItem(CONFIG.USED_KEY, JSON.stringify([...s])); } catch {} };
     const isUsed = (k) => getUsed().has(k);
 
-    // 🔔 Уведомление
     const notify = (msg) => {
         const t = document.createElement("div");
         t.className = "toast";
-        t.innerHTML = `<span>✨ ${msg}</span><button onclick="this.parentElement.classList.add('hide'); setTimeout(()=>this.parentElement.remove(), 500)">✕</button>`;
+        t.innerHTML = `<span>✨ ${msg}</span><button onclick="this.parentElement.remove()">✕</button>`;
         document.body.appendChild(t);
         requestAnimationFrame(() => t.classList.add("show"));
-        setTimeout(() => { t.classList.add("hide"); setTimeout(() => t.remove(), 500); }, 12000);
+        setTimeout(() => t.remove(), 12000);
     };
 
-    // 🌐 Проверка доступности (реалистичный пинг для браузера)
+    // ✅ Безопасный пинг через Image (не вешает браузер, нет CORS-префлайтов)
     const checkPing = async (server, port) => {
-        const start = performance.now();
-        try {
-            // Пробуем открыть порт с таймаутом 1с
-            await fetch(`https://${server}:${port}/`, { mode: "no-cors", signal: AbortSignal.timeout(1000) });
-            const ms = Math.round(performance.now() - start);
-            return ms < 1000 ? ms : null;
-        } catch { return null; }
+        return new Promise(resolve => {
+            const start = performance.now();
+            const img = new Image();
+            const timeout = setTimeout(() => { cleanup(); resolve(null); }, 1200);
+            const cleanup = () => { clearTimeout(timeout); img.onload = img.onerror = null; img.src = ""; };
+            img.onload = img.onerror = () => { cleanup(); resolve(Math.round(performance.now() - start)); };
+            img.src = `https://${server}:${port}/favicon.ico?_=${Date.now()}`;
+        });
     };
 
-    // 📥 Загрузка и обновление
+    // ✅ Загрузка с таймаутом 8 сек + гарантированный рендер
     const updateProxies = async () => {
-        try {
-            const res = await fetch(CONFIG.WORKER_URL, { cache: "no-store" });
-            const data = await res.json();
-            if (!data.success || !data.proxies?.length) return;
-
-            const raw = data.proxies.filter(p => p.server && p.server !== "Unknown" && p.port && p.secret);
-            const oldKeys = new Set(state.proxies.map(p => `${p.server}:${p.port}`));
-            const newValid = raw.slice(0, CONFIG.MAX_PROXIES);
-            
-            // Проверка на новые
-            const added = newValid.filter(p => !oldKeys.has(`${p.server}:${p.port}`));
-            if (added.length > 0) notify(`Найдено ${added.length} новых прокси!`);
-            
-            state.proxies = newValid.map(p => ({ ...p, key: `${p.server}:${p.port}`, used: isUsed(`${p.server}:${p.port}`) }));
-            render();
-        } catch (e) { console.warn("Fetch error:", e); }
+        clearInterval(state.timer);
+        let errorMsg = null;
         
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000); // 8 сек максимум
+            const res = await fetch(CONFIG.WORKER_URL, { cache: "no-store", signal: controller.signal });
+            clearTimeout(timeout);
+            
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            
+            if (data.success && data.proxies?.length) {
+                const raw = data.proxies.filter(p => p.server && p.server !== "Unknown" && p.port && p.secret);
+                const oldKeys = new Set(state.proxies.map(p => p.key));
+                const newValid = raw.slice(0, CONFIG.MAX_PROXIES);
+                const added = newValid.filter(p => !oldKeys.has(`${p.server}:${p.port}`));
+                if (added.length > 0) notify(`Найдено ${added.length} новых прокси!`);
+                state.proxies = newValid.map(p => ({ ...p, key: `${p.server}:${p.port}`, used: isUsed(`${p.server}:${p.port}`) }));
+            } else {
+                errorMsg = "Сервер вернул пустой список. Ждём обновления...";
+            }
+        } catch (e) {
+            errorMsg = e.name === "AbortError" ? "Превышено время ожидания (8с)" : `Ошибка загрузки: ${e.message}`;
+        }
+        
+        render(errorMsg);
         setTarget(Date.now() + CONFIG.REFRESH_MS);
         startCountdown();
     };
 
-    // ⏳ Обратный отсчёт
     const startCountdown = () => {
         clearInterval(state.timer);
         const target = getTarget();
@@ -129,43 +133,43 @@
         
         const tick = () => {
             const diff = target - Date.now();
-            el.textContent = diff <= 0 ? "00:00" : `${Math.floor(diff/60000).toString().padStart(2,'0')}:${Math.floor((diff%60000)/1000).toString().padStart(2,'0')}`;
-            if (diff <= 0) { clearInterval(state.timer); updateProxies(); }
+            if (diff <= 0) { clearInterval(state.timer); updateProxies(); return; }
+            el.textContent = `${Math.floor(diff/60000).toString().padStart(2,'0')}:${Math.floor((diff%60000)/1000).toString().padStart(2,'0')}`;
         };
         tick();
         state.timer = setInterval(tick, 1000);
     };
 
-    // 🔄 Пинг-луп
     const runPingLoop = () => {
         clearInterval(state.pingTimer);
         const loop = async () => {
             for (const p of state.proxies) {
                 const el = document.getElementById(`ping-${p.key}`);
-                if (!el) continue;
+                if (!el || el.offsetParent === null) continue;
                 const ms = await checkPing(p.server, p.port);
-                el.className = `ping-badge ${ms === null ? 'ping-good' : ms < 150 ? 'ping-good' : 'ping-mid'}`;
-                el.textContent = ms === null ? "🟢 Доступен" : `~${ms}ms`;
-                await new Promise(r => setTimeout(r, 120));
+                if (el) {
+                    el.className = `ping-badge ${ms === null || ms < 200 ? 'ping-good' : 'ping-mid'}`;
+                    el.textContent = ms === null ? "🟢" : `~${ms}ms`;
+                }
+                await new Promise(r => setTimeout(r, 100));
             }
         };
         loop();
         state.pingTimer = setInterval(loop, CONFIG.PING_INTERVAL);
     };
 
-    // 🎨 Рендер
-    const render = () => {
-        // Сортировка: активные сверху, использованные снизу
+    const render = (error) => {
         const sorted = [...state.proxies].sort((a,b) => a.used - b.used).slice(0, CONFIG.MAX_PROXIES);
-        
         let html = `
             <div class="header">
-                <div class="version">v2.2.0</div>
+                <div class="version">v2.2.1</div>
                 <div class="stats">📡 ${sorted.length} серверов</div>
             </div>
             <h1>MTProto для Telegram</h1>
             <div class="sub">Источник: @ProxyFree_Ru • Автообновление 10 мин</div>
+            ${error ? `<div class="error-msg">${error}</div>` : ""}
         `;
+        
         sorted.forEach(p => {
             html += `
                 <div class="proxy-card ${p.used ? 'used' : 'active'}" data-key="${p.key}">
@@ -177,9 +181,11 @@
                     <button class="btn" onclick="connectProxy('${p.raw}')">Подключить</button>
                 </div>`;
         });
+        
+        if (sorted.length === 0 && !error) html += `<div class="loader"><div class="spinner"></div>Нет доступных прокси. Обновление...</div>`;
         html += `<div class="footer">Обновление через: <span id="countdown">--:--</span></div>`;
         document.getElementById("app").innerHTML = html;
-        runPingLoop();
+        if (sorted.length) runPingLoop();
     };
 
     window.connectProxy = (raw) => {
@@ -188,10 +194,7 @@
         location.href = raw;
     };
 
-    // 🚀 Старт
-    document.addEventListener("DOMContentLoaded", () => {
-        updateProxies();
-    });
+    document.addEventListener("DOMContentLoaded", updateProxies);
 </script>
 </body>
 </html>
