@@ -1,7 +1,8 @@
 {
   "success": true,
   "count": 16,
-  "timestamp": "2026-04-14T05:52:54.457Z",
+  "timestamp": "2026-04-14T06:21:05.915Z",
+  "next_update": "2026-04-14T06:31:05.915Z",
   "proxies": [
     {
       "type": "MTProto",
