@@ -14,8 +14,8 @@ const FALLBACK = [
   {type:"MTProto",server:"91.107.255.159",port:"8443",secret:"eeNEgYdJvXrFGRMCIMJdCQ",flag:"🇩🇪"},
   {type:"MTProto",server:"65.109.153.70",port:"8443",secret:"1320PuNyHw_LQKT_Y7XNJw",flag:"🇫🇮"},
   {type:"MTProto",server:"51.15.246.20",port:"8443",secret:"eeNEgYdJvXrFGRMCIMJdCQ",flag:"🇫🇷"},
-  {type:"MTProto",server:"149.154.167.91",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬"},
-  {type:"MTProto",server:"149.154.167.103",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬"},
+  {type:"MTProto",server:"149.154.167.91",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬🇧"},
+  {type:"MTProto",server:"149.154.167.103",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬🇧"},
   {type:"MTProto",server:"149.154.167.92",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬🇧"},
   {type:"MTProto",server:"149.154.167.100",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬🇧"},
   {type:"MTProto",server:"149.154.171.100",port:"8443",secret:"dd070b1b71f82167e279061e9b53f4f1",flag:"🇬🇧"},
@@ -25,9 +25,10 @@ const FALLBACK = [
 ];
 
 const FLAG_MAP = {
-  '185.': '🇳🇱', '91.107.': '🇩🇪', '65.109.': '🇫🇮', '51.15.': '🇫',
-  '149.154.': '🇬🇧', '.ru': '🇷🇺', '.de': '🇩🇪', '.nl': '🇳',
-  '.fr': '🇫🇷', '.fi': '🇫🇮', '.uk': '🇬🇧', '.us': '🇺🇸', '.sg': '🇸🇬'
+  '185.': '🇳🇱', '91.107.': '🇩🇪', '65.109.': '🇫🇮', '51.15.': '🇫🇷',
+  '149.154.': '🇬🇧', '.ru': '🇷🇺', '.de': '🇩🇪', '.nl': '🇳🇱',
+  '.fr': '🇫🇷', '.fi': '🇫🇮', '.uk': '🇬🇧', '.us': '🇺🇸', '.sg': '🇸🇬',
+  '.ir': '🇮🇷', '.ae': '🇦🇪', '.tr': '🇹🇷', '.pl': '🇵🇱'
 };
 
 function fetchUrl(url) {
@@ -49,38 +50,17 @@ function fetchUrl(url) {
 
 function parseProxies(html, fetchTime) {
   const proxies = [];
-  
-  const decoded = html
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  const decoded = html.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   
   const tgPattern = /tg:\/\/proxy[?\s]*[^"'\s>]*server[=\s]+([^&\s"']+(?:\.[^&\s"']+)*)[^"'\s>]*port[=\s]+(\d{3,5})[^"'\s>]*secret[=\s]+([A-Za-z0-9_+\-=/]{16,})/gi;
-  
   let match;
   while ((match = tgPattern.exec(decoded)) !== null) {
     try {
-      const server = match[1].trim();
-      const port = match[2].trim();
-      const secret = match[3].trim();
-      
+      const server = match[1].trim(), port = match[2].trim(), secret = match[3].trim();
       if (server && port && secret.length >= 16 && server.toLowerCase() !== 'unknown') {
-        proxies.push({
-          type: 'MTProto',
-          server,
-          port,
-          secret,
-          flag: getFlag(server),
-          fetchedAt: fetchTime,
-          raw: `tg://proxy?server=${server}&port=${port}&secret=${secret}`
-        });
-        console.log('✅ Parsed:', server, port);
+        proxies.push({ type:'MTProto', server, port, secret, flag: getFlag(server), fetchedAt: fetchTime, raw: `tg://proxy?server=${server}&port=${port}&secret=${secret}` });
       }
-    } catch(e) {
-      console.warn('Parse error:', e.message);
-    }
+    } catch(e) {}
   }
   
   const hrefPattern = /href=["']([^"']*tg:\/\/proxy[^"']*)["']/gi;
@@ -89,89 +69,50 @@ function parseProxies(html, fetchTime) {
     try {
       const link = hrefMatch[1].replace(/&amp;/g, '&');
       const params = new URLSearchParams(link.replace('tg://proxy?', ''));
-      const server = params.get('server');
-      const port = params.get('port');
-      const secret = params.get('secret');
-      
+      const server = params.get('server'), port = params.get('port'), secret = params.get('secret');
       if (server && port && secret?.length >= 16) {
-        proxies.push({
-          type: 'MTProto',
-          server,
-          port,
-          secret,
-          flag: getFlag(server),
-          fetchedAt: fetchTime,
-          raw: link
-        });
+        proxies.push({ type:'MTProto', server, port, secret, flag: getFlag(server), fetchedAt: fetchTime, raw: link });
       }
     } catch(e) {}
   }
-  
-  console.log(`🔍 Total parsed: ${proxies.length}`);
   return proxies;
 }
 
 function getFlag(ip) {
-  for (const [prefix, flag] of Object.entries(FLAG_MAP)) {
-    if (ip.includes(prefix)) return flag;
-  }
+  for (const [prefix, flag] of Object.entries(FLAG_MAP)) { if (ip.includes(prefix) && flag !== '🇺🇦') return flag; }
   return '🌐';
 }
 
 async function main() {
-  let proxies = [];
-  const seen = new Set();
-  const fetchTime = new Date().toISOString();
-  
-  console.log('🔍 Fetching proxies from Telegram...');
-  console.log('🕐 Fetch time:', fetchTime);
+  let proxies = [], seen = new Set(), fetchTime = new Date().toISOString();
+  console.log('🔍 Fetching proxies from Telegram...', fetchTime);
   
   for (const channel of CHANNELS) {
     if (proxies.length >= 15) break;
-    
     try {
       console.log('📡 Trying:', channel);
       const html = await fetchUrl(channel);
-      console.log('📄 HTML length:', html.length);
-      
       const found = parseProxies(html, fetchTime);
-      console.log('✅ Found:', found.length, 'proxies');
-      
       for (const p of found) {
         const key = `${p.server}:${p.port}`;
-        if (!seen.has(key) && p.secret.length >= 16) {
-          seen.add(key);
-          proxies.push(p);
-          console.log('➕ Added:', key);
-        }
+        if (!seen.has(key) && p.secret.length >= 16) { seen.add(key); proxies.push(p); }
       }
-    } catch (e) {
-      console.error('❌ Error:', channel, e.message);
-    }
+    } catch (e) { console.error('❌ Error:', channel, e.message); }
   }
   
-  console.log('📊 Total unique:', proxies.length);
-  
   if (proxies.length < 3) {
-    console.log('⚠️ Using fallback proxies');
-    proxies = FALLBACK.map(p => ({
-      ...p,
-      fetchedAt: fetchTime,
-      raw: `tg://proxy?server=${p.server}&port=${p.port}&secret=${p.secret}`
-    }));
+    console.log('⚠️ Using fallback');
+    proxies = FALLBACK.map(p => ({ ...p, fetchedAt: fetchTime, raw: `tg://proxy?server=${p.server}&port=${p.port}&secret=${p.secret}` }));
   }
   
   const result = {
-    success: true,
-    count: proxies.length,
-    timestamp: fetchTime,
-    next_update: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    success: true, count: proxies.length, timestamp: fetchTime,
+    next_update: new Date(Date.now() + 10*60*1000).toISOString(),
     proxies: proxies.slice(0, 12),
     source: proxies.length >= 3 && !proxies.every(p => FALLBACK.some(fb => fb.server === p.server)) ? 'telegram' : 'fallback'
   };
   
   fs.writeFileSync('proxies.json', JSON.stringify(result, null, 2));
-  console.log('💾 Saved', proxies.length, 'proxies to proxies.json');
+  console.log('💾 Saved', proxies.length, 'proxies');
 }
-
 main().catch(console.error);
